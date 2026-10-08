@@ -38,21 +38,26 @@ sub_h = 0.6
 z_ground = 0
 z_flown = 10
 
-# Fan geometry
-n_rows = 2          # lignes cote a cote
-n_front = 3         # caisses en profondeur, array central
-n_side = 2          # caisses en profondeur, arrays lateraux
-spacing = 1.2       # pas end-fire
-side_aim = 25       # ouverture des arrays lateraux [deg]
-gap = 1.0           # jeu entre central et lateraux
-side_advance = -1.0  # avance des lateraux le long de leur axe de tir [m]
-delay = spacing/c
+# Horizontal cardioid : une ligne de caisses le long de y, tir vers +x.
+# Dans chaque groupe de 3, une caisse est retournee (tir vers -x) avec
+# inversion de phase et retard sub_d/c : elle annule l'arriere.
+n_groups = 2
+group_size = 3
+rear_index_in_group = [1, 1]    # caisse retournee de chaque groupe (symetrique)
+group_gap = 0.0                 # espace libre entre les deux groupes [m]
+N_sub = n_groups*group_size
+rear_idx = [g*group_size + r for g, r in enumerate(rear_index_in_group)]
+n_rear = len(rear_idx)
+n_front = N_sub - n_rear
+
+delay = sub_d/c
 delay_ms = delay*1000
+rear_gain = n_front/n_rear      # annulation a l'arriere : somme des arrieres = somme des avants
 
 # Evaluation and display
 evaluation_margin = 0.5
 target = -3
-level_min = -40          # la fosse fait 95 x 60 m : 20 dB ne suffisent pas
+level_min = -40
 level_max = 0
 levels = np.linspace(level_min, level_max, 21)
 
@@ -61,37 +66,31 @@ levels = np.linspace(level_min, level_max, 21)
 # ARRAY GEOMETRY
 # ============================================================
 
-def endfire_rows(n_rows, n_depth, aim_deg, dx=0.0, dy=0.0):
-    """Lignes end-fire paralleles. Une caisse = (x, y, yaw_deg, tau)."""
-    a = np.deg2rad(aim_deg)
-    ca, sa = np.cos(a), np.sin(a)
+def build_boxes():
+    """Une caisse = (x, y, yaw_deg, tau, poids). Poids < 0 : phase inversee."""
     boxes = []
-    for o in (np.arange(n_rows) - (n_rows-1)/2)*sub_w:
-        for i in range(n_depth):
-            d = (i - (n_depth-1))*spacing
-            boxes.append((-o*sa + d*ca + dx, o*ca + d*sa + dy, aim_deg, i*delay))
+    for i in range(N_sub):
+        g, j = divmod(i, group_size)
+        yb = ((j - (group_size-1)/2)*sub_w
+              + (g - (n_groups-1)/2)*(group_size*sub_w + group_gap))
+        if i in rear_idx:
+            boxes.append((0.0, yb, 180.0, delay, -rear_gain))
+        else:
+            boxes.append((0.0, yb, 0.0, 0.0, 1.0))
     return boxes
 
 
-offset = n_rows*sub_w + gap
-boxes = endfire_rows(n_rows, n_front, 0.0)
-for sign in (+1, -1):
-    a = np.deg2rad(sign*side_aim)
-    boxes += endfire_rows(n_rows, n_side, sign*side_aim,
-                          dx=-sign*offset*np.sin(a) + side_advance*np.cos(a),
-                          dy=sign*offset*np.cos(a) + side_advance*np.sin(a))
-
-N_sub = len(boxes)
+boxes = build_boxes()
 
 
 def source_positions(z_start):
     """Centre acoustique de chaque caisse : centre geometrique avance de
     sub_d/2 le long de l'axe de tir."""
     out = []
-    for xb, yb, yaw, tau in boxes:
+    for xb, yb, yaw, tau, w in boxes:
         a = np.deg2rad(yaw)
         out.append((xb + sub_d/2*np.cos(a), yb + sub_d/2*np.sin(a),
-                    z_start + sub_h/2, tau))
+                    z_start + sub_h/2, tau, w))
     return out
 
 
@@ -121,10 +120,10 @@ def monopole_top_view(X, Y, z_obs, xs, ys, zs):
     return p_direct + p_image
 
 
-def fan_top_view(X, Y, z_obs, z_start):
+def cardioid_top_view(X, Y, z_obs, z_start):
     p = np.zeros_like(X, dtype=complex)
-    for xs, ys, zs, tau in source_positions(z_start):
-        p += np.exp(-1j*2*np.pi*f*tau)*monopole_top_view(X, Y, z_obs, xs, ys, zs)
+    for xs, ys, zs, tau, w in source_positions(z_start):
+        p += w*np.exp(-1j*2*np.pi*f*tau)*monopole_top_view(X, Y, z_obs, xs, ys, zs)
     return p
 
 
@@ -133,7 +132,7 @@ def fan_top_view(X, Y, z_obs, z_start):
 # ============================================================
 
 source_zone = np.zeros_like(X, dtype=bool)
-for xb, yb, yaw, tau in boxes:
+for xb, yb, yaw, tau, w in boxes:
     source_zone |= ((np.abs(X-xb) <= sub_d/2 + evaluation_margin)
                     & (np.abs(Y-yb) <= sub_w/2 + evaluation_margin))
 evaluation_zone = ~source_zone
@@ -143,8 +142,8 @@ evaluation_zone = ~source_zone
 # PRESSURE FIELDS
 # ============================================================
 
-p_ground_xy = fan_top_view(X, Y, z_obs, z_ground)
-p_flown_xy = fan_top_view(X, Y, z_obs, z_flown)
+p_ground_xy = cardioid_top_view(X, Y, z_obs, z_ground)
+p_flown_xy = cardioid_top_view(X, Y, z_obs, z_flown)
 
 ref_ground = np.max(np.abs(p_ground_xy[evaluation_zone]))
 ref_flown = np.max(np.abs(p_flown_xy[evaluation_zone]))
@@ -166,10 +165,10 @@ SPL_flown_xy = np.clip(SPL_flown_xy_raw, level_min, level_max)
 # ============================================================
 
 def config_title(z):
-    return rf'{N_sub} subwoofers in a circular gradient end-fire from $z = {z:g}\ \mathrm{{m}}$'
+    return rf'{N_sub} subwoofers in a horizontal cardioid from $z = {z:g}\ \mathrm{{m}}$'
 
 
-def draw_sub_box(ax, xb, yb, yaw, z_bottom):
+def draw_sub_box(ax, xb, yb, yaw, z_bottom, rear):
     base = footprint(xb, yb, yaw)
     top = [(u, v, z_bottom + sub_h) for u, v in base]
     bot = [(u, v, z_bottom) for u, v in base]
@@ -177,7 +176,8 @@ def draw_sub_box(ax, xb, yb, yaw, z_bottom):
     for i in range(4):
         j = (i+1) % 4
         faces.append([bot[i], bot[j], top[j], top[i]])
-    ax.add_collection3d(Poly3DCollection(faces, facecolor='white',
+    ax.add_collection3d(Poly3DCollection(faces,
+                                         facecolor='lightsalmon' if rear else 'white',
                                          edgecolor='black', linewidths=0.6))
 
 
@@ -195,8 +195,8 @@ def draw_3d_scene(ax, z_start):
     ax.plot_surface(xx, yy, zz_obs, color='limegreen', alpha=0.2, linewidth=0)
     ax.plot_surface(xx_slice, yy_slice, zz_slice, color='blue', alpha=0.2, linewidth=0)
 
-    for xb, yb, yaw, tau in boxes:
-        draw_sub_box(ax, xb, yb, yaw, z_start)
+    for xb, yb, yaw, tau, w in boxes:
+        draw_sub_box(ax, xb, yb, yaw, z_start, rear=(w < 0))
 
     ax.set_title(config_title(z_start), fontsize=12, fontweight='bold')
     ax.set_xlabel(r'$x$ [m]')
@@ -213,9 +213,10 @@ def plot_horizontal(ax, SPL, title=None):
     im = ax.contourf(X, Y, SPL, levels=levels, cmap='viridis')
     ax.contour(X, Y, SPL, levels=[target], colors='red', linewidths=1, linestyles='solid')
 
-    for xb, yb, yaw, tau in boxes:
+    for xb, yb, yaw, tau, w in boxes:
         ax.add_patch(Polygon(footprint(xb, yb, yaw), closed=True,
-                             facecolor='white', edgecolor='black', linewidth=1.0))
+                             facecolor='lightsalmon' if w < 0 else 'white',
+                             edgecolor='black', linewidth=1.0))
 
     if title is not None:
         ax.set_title(title, fontsize=12)
@@ -270,11 +271,11 @@ gradient_box = (r'$\Delta L = L_{\mathrm{max}} - L_{\mathrm{min}}$' + '\n'
 fig.text(x_cbar, y_box, gradient_box, ha='center', va='center',
          bbox=dict(boxstyle='round', facecolor='white', edgecolor='black'))
 
-fan_box = (rf'Central array : {n_rows} rows x {n_front} deep;' + '\n'
-           + rf'side arrays : {n_rows} rows x {n_side} deep at $\pm {side_aim:g}^\circ$;' + '\n'
-           + rf'end-fire spacing $d = {spacing:.2f}\ \mathrm{{m}}$, $\tau = {delay_ms:.2f}\ \mathrm{{ms}}$ per step' + '\n'
-           + rf'maps computed at $f = {f:g}\ \mathrm{{Hz}}$')
-fig.text(x_maps, y_box, fan_box, ha='center', va='center',
+cardioid_box = (rf'{n_groups} groups of {group_size} in line along $y$, firing towards $+x$;' + '\n'
+                + rf'{n_rear} reversed (orange) : inverted phase, gain {rear_gain:g}, '
+                + rf'$\tau = {delay_ms:.2f}\ \mathrm{{ms}}$' + '\n'
+                + rf'maps computed at $f = {f:g}\ \mathrm{{Hz}}$')
+fig.text(x_maps, y_box, cardioid_box, ha='center', va='center',
          bbox=dict(boxstyle='round', facecolor='white', edgecolor='black'))
 
 green_line = Line2D([0], [0], color='limegreen', linewidth=1, alpha=0.5)

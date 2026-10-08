@@ -26,7 +26,7 @@ X, Y = np.meshgrid(x, y)
 
 # Vertical section
 z_min = 0
-z_max = 14
+z_max = 10
 y_slice = 0
 
 # Subwoofer dimensions
@@ -34,25 +34,18 @@ sub_w = 1.0
 sub_d = 0.8
 sub_h = 0.6
 
-# Array heights
-z_ground = 0
-z_flown = 10
+# Array height
+z_flown = 8
 
-# Fan geometry
+# End-fire array (one per figure row, one spacing each)
 n_rows = 2          # lignes cote a cote
-n_front = 3         # caisses en profondeur, array central
-n_side = 2          # caisses en profondeur, arrays lateraux
-spacing = 1.2       # pas end-fire
-side_aim = 25       # ouverture des arrays lateraux [deg]
-gap = 1.0           # jeu entre central et lateraux
-side_advance = -1.0  # avance des lateraux le long de leur axe de tir [m]
-delay = spacing/c
-delay_ms = delay*1000
+n_deep = 4          # caisses en profondeur
+spacings = [1.2, 0.8]   # pas end-fire [m]
 
 # Evaluation and display
 evaluation_margin = 0.5
 target = -3
-level_min = -40          # la fosse fait 95 x 60 m : 20 dB ne suffisent pas
+level_min = -40
 level_max = 0
 levels = np.linspace(level_min, level_max, 21)
 
@@ -61,38 +54,24 @@ levels = np.linspace(level_min, level_max, 21)
 # ARRAY GEOMETRY
 # ============================================================
 
-def endfire_rows(n_rows, n_depth, aim_deg, dx=0.0, dy=0.0):
-    """Lignes end-fire paralleles. Une caisse = (x, y, yaw_deg, tau)."""
-    a = np.deg2rad(aim_deg)
-    ca, sa = np.cos(a), np.sin(a)
+def endfire_rows(spacing, dy=0.0):
+    """Lignes end-fire paralleles tirant vers +x. Une caisse = (x, y, yaw_deg, tau)."""
     boxes = []
     for o in (np.arange(n_rows) - (n_rows-1)/2)*sub_w:
-        for i in range(n_depth):
-            d = (i - (n_depth-1))*spacing
-            boxes.append((-o*sa + d*ca + dx, o*ca + d*sa + dy, aim_deg, i*delay))
+        for i in range(n_deep):
+            boxes.append(((i - (n_deep-1))*spacing, o + dy, 0.0, i*spacing/c))
     return boxes
 
 
-offset = n_rows*sub_w + gap
-boxes = endfire_rows(n_rows, n_front, 0.0)
-for sign in (+1, -1):
-    a = np.deg2rad(sign*side_aim)
-    boxes += endfire_rows(n_rows, n_side, sign*side_aim,
-                          dx=-sign*offset*np.sin(a) + side_advance*np.cos(a),
-                          dy=sign*offset*np.cos(a) + side_advance*np.sin(a))
-
-N_sub = len(boxes)
+def build_boxes(spacing):
+    return endfire_rows(spacing)
 
 
-def source_positions(z_start):
+def source_positions(boxes, z_start):
     """Centre acoustique de chaque caisse : centre geometrique avance de
     sub_d/2 le long de l'axe de tir."""
-    out = []
-    for xb, yb, yaw, tau in boxes:
-        a = np.deg2rad(yaw)
-        out.append((xb + sub_d/2*np.cos(a), yb + sub_d/2*np.sin(a),
-                    z_start + sub_h/2, tau))
-    return out
+    return [(xb + sub_d/2, yb, z_start + sub_h/2, tau)
+            for xb, yb, yaw, tau in boxes]
 
 
 def footprint(xb, yb, yaw):
@@ -121,52 +100,45 @@ def monopole_top_view(X, Y, z_obs, xs, ys, zs):
     return p_direct + p_image
 
 
-def fan_top_view(X, Y, z_obs, z_start):
+def array_top_view(boxes, X, Y, z_obs, z_start):
     p = np.zeros_like(X, dtype=complex)
-    for xs, ys, zs, tau in source_positions(z_start):
+    for xs, ys, zs, tau in source_positions(boxes, z_start):
         p += np.exp(-1j*2*np.pi*f*tau)*monopole_top_view(X, Y, z_obs, xs, ys, zs)
     return p
 
 
 # ============================================================
-# EVALUATION AREA
+# CONFIGURATIONS AND PRESSURE FIELDS
 # ============================================================
 
-source_zone = np.zeros_like(X, dtype=bool)
-for xb, yb, yaw, tau in boxes:
-    source_zone |= ((np.abs(X-xb) <= sub_d/2 + evaluation_margin)
-                    & (np.abs(Y-yb) <= sub_w/2 + evaluation_margin))
-evaluation_zone = ~source_zone
+configs = [dict(boxes=build_boxes(d), spacing=d) for d in spacings]
+N_sub = len(configs[0]['boxes'])
 
+for cfg in configs:
+    boxes = cfg['boxes']
 
-# ============================================================
-# PRESSURE FIELDS
-# ============================================================
+    source_zone = np.zeros_like(X, dtype=bool)
+    for xb, yb, yaw, tau in boxes:
+        source_zone |= ((np.abs(X-xb) <= sub_d/2 + evaluation_margin)
+                        & (np.abs(Y-yb) <= sub_w/2 + evaluation_margin))
+    evaluation_zone = ~source_zone
 
-p_ground_xy = fan_top_view(X, Y, z_obs, z_ground)
-p_flown_xy = fan_top_view(X, Y, z_obs, z_flown)
+    p = array_top_view(boxes, X, Y, z_obs, z_flown)
+    ref = np.max(np.abs(p[evaluation_zone]))
+    SPL_raw = 20*np.log10(np.maximum(np.abs(p), 1e-12)/ref)
 
-ref_ground = np.max(np.abs(p_ground_xy[evaluation_zone]))
-ref_flown = np.max(np.abs(p_flown_xy[evaluation_zone]))
-
-SPL_ground_xy_raw = 20*np.log10(np.maximum(np.abs(p_ground_xy), 1e-12)/ref_ground)
-SPL_flown_xy_raw = 20*np.log10(np.maximum(np.abs(p_flown_xy), 1e-12)/ref_flown)
-
-gradient_ground = (np.max(SPL_ground_xy_raw[evaluation_zone])
-                   - np.min(SPL_ground_xy_raw[evaluation_zone]))
-gradient_flown = (np.max(SPL_flown_xy_raw[evaluation_zone])
-                  - np.min(SPL_flown_xy_raw[evaluation_zone]))
-
-SPL_ground_xy = np.clip(SPL_ground_xy_raw, level_min, level_max)
-SPL_flown_xy = np.clip(SPL_flown_xy_raw, level_min, level_max)
+    cfg['gradient'] = (np.max(SPL_raw[evaluation_zone])
+                       - np.min(SPL_raw[evaluation_zone]))
+    cfg['SPL'] = np.clip(SPL_raw, level_min, level_max)
 
 
 # ============================================================
 # DISPLAY FUNCTIONS
 # ============================================================
 
-def config_title(z):
-    return rf'{N_sub} subwoofers in a circular gradient end-fire from $z = {z:g}\ \mathrm{{m}}$'
+def config_title(cfg):
+    return (rf'{N_sub} subwoofers in a centred end-fire, '
+            rf'$d = {cfg["spacing"]:.1f}\ \mathrm{{m}}$ from $z = {z_flown:g}\ \mathrm{{m}}$')
 
 
 def draw_sub_box(ax, xb, yb, yaw, z_bottom):
@@ -181,13 +153,14 @@ def draw_sub_box(ax, xb, yb, yaw, z_bottom):
                                          edgecolor='black', linewidths=0.6))
 
 
-def draw_3d_scene(ax, z_start):
-    xx = np.array([[-8, 8], [-8, 8]])
-    yy = np.array([[-8, -8], [8, 8]])
+def draw_3d_scene(ax, cfg, z_start):
+    lim = 8
+    xx = np.array([[-lim, lim], [-lim, lim]])
+    yy = np.array([[-lim, -lim], [lim, lim]])
     zz_ground = np.zeros((2, 2))
     zz_obs = z_obs*np.ones((2, 2))
 
-    xx_slice = np.array([[-8, 8], [-8, 8]])
+    xx_slice = np.array([[-lim, lim], [-lim, lim]])
     yy_slice = y_slice*np.ones((2, 2))
     zz_slice = np.array([[z_min, z_min], [z_max, z_max]])
 
@@ -195,25 +168,25 @@ def draw_3d_scene(ax, z_start):
     ax.plot_surface(xx, yy, zz_obs, color='limegreen', alpha=0.2, linewidth=0)
     ax.plot_surface(xx_slice, yy_slice, zz_slice, color='blue', alpha=0.2, linewidth=0)
 
-    for xb, yb, yaw, tau in boxes:
+    for xb, yb, yaw, tau in cfg['boxes']:
         draw_sub_box(ax, xb, yb, yaw, z_start)
 
-    ax.set_title(config_title(z_start), fontsize=12, fontweight='bold')
+    ax.set_title(config_title(cfg), fontsize=12, fontweight='bold')
     ax.set_xlabel(r'$x$ [m]')
     ax.set_ylabel(r'$y$ [m]')
     ax.set_zlabel(r'$z$ [m]')
-    ax.set_xlim(-8, 8)
-    ax.set_ylim(-8, 8)
+    ax.set_xlim(-lim, lim)
+    ax.set_ylim(-lim, lim)
     ax.set_zlim(z_min, z_max)
-    ax.set_box_aspect((16, 16, 14))
+    ax.set_box_aspect((16, 16, 10))
     ax.view_init(elev=22, azim=-58)
 
 
-def plot_horizontal(ax, SPL, title=None):
-    im = ax.contourf(X, Y, SPL, levels=levels, cmap='viridis')
-    ax.contour(X, Y, SPL, levels=[target], colors='red', linewidths=1, linestyles='solid')
+def plot_horizontal(ax, cfg, title=None):
+    im = ax.contourf(X, Y, cfg['SPL'], levels=levels, cmap='viridis')
+    ax.contour(X, Y, cfg['SPL'], levels=[target], colors='red', linewidths=1, linestyles='solid')
 
-    for xb, yb, yaw, tau in boxes:
+    for xb, yb, yaw, tau in cfg['boxes']:
         ax.add_patch(Polygon(footprint(xb, yb, yaw), closed=True,
                              facecolor='white', edgecolor='black', linewidth=1.0))
 
@@ -238,19 +211,17 @@ gs = fig.add_gridspec(2, 3, width_ratios=[1, 1.35, 0.05],
                       left=0.04, right=0.91, bottom=0.21, top=0.93,
                       wspace=0.22, hspace=0.26)
 
-ax3d_ground = fig.add_subplot(gs[0, 0], projection='3d')
-axxy_ground = fig.add_subplot(gs[0, 1])
-
-ax3d_flown = fig.add_subplot(gs[1, 0], projection='3d')
-axxy_flown = fig.add_subplot(gs[1, 1])
-
 cax = fig.add_subplot(gs[:, 2])
 
-draw_3d_scene(ax3d_ground, z_ground)
-im = plot_horizontal(axxy_ground, SPL_ground_xy, r'Horizontal plane')
-
-draw_3d_scene(ax3d_flown, z_flown)
-plot_horizontal(axxy_flown, SPL_flown_xy)
+axes_3d = []
+axes_xy = []
+for row, cfg in enumerate(configs):
+    ax3d = fig.add_subplot(gs[row, 0], projection='3d')
+    axxy = fig.add_subplot(gs[row, 1])
+    draw_3d_scene(ax3d, cfg, z_flown)
+    im = plot_horizontal(axxy, cfg, r'Horizontal plane' if row == 0 else None)
+    axes_3d.append(ax3d)
+    axes_xy.append(axxy)
 
 
 # ============================================================
@@ -258,23 +229,25 @@ plot_horizontal(axxy_flown, SPL_flown_xy)
 # ============================================================
 
 # Each box is centred under the panel it describes
-axxy_flown.apply_aspect()
-x_3d = 0.5 * sum(ax3d_flown.get_position().intervalx)
-x_maps = 0.5 * sum(axxy_flown.get_position().intervalx)
+axes_xy[-1].apply_aspect()
+x_3d = 0.5 * sum(axes_3d[-1].get_position().intervalx)
+x_maps = 0.5 * sum(axes_xy[-1].get_position().intervalx)
 x_cbar = 0.5 * sum(cax.get_position().intervalx)
 y_box = 0.07
 
-gradient_box = (r'$\Delta L = L_{\mathrm{max}} - L_{\mathrm{min}}$' + '\n'
-                + rf'$z = {z_ground:g}\ \mathrm{{m}}$ : $\Delta L = {gradient_ground:.2f}\ \mathrm{{dB}}$' + '\n'
-                + rf'$z = {z_flown:g}\ \mathrm{{m}}$ : $\Delta L = {gradient_flown:.2f}\ \mathrm{{dB}}$')
+gradient_box = r'$\Delta L = L_{\mathrm{max}} - L_{\mathrm{min}}$'
+for cfg in configs:
+    gradient_box += '\n' + (rf'$d = {cfg["spacing"]:.1f}\ \mathrm{{m}}$ : '
+                            rf'$\Delta L = {cfg["gradient"]:.2f}\ \mathrm{{dB}}$')
 fig.text(x_cbar, y_box, gradient_box, ha='center', va='center',
          bbox=dict(boxstyle='round', facecolor='white', edgecolor='black'))
 
-fan_box = (rf'Central array : {n_rows} rows x {n_front} deep;' + '\n'
-           + rf'side arrays : {n_rows} rows x {n_side} deep at $\pm {side_aim:g}^\circ$;' + '\n'
-           + rf'end-fire spacing $d = {spacing:.2f}\ \mathrm{{m}}$, $\tau = {delay_ms:.2f}\ \mathrm{{ms}}$ per step' + '\n'
-           + rf'maps computed at $f = {f:g}\ \mathrm{{Hz}}$')
-fig.text(x_maps, y_box, fan_box, ha='center', va='center',
+delays_ms = ' / '.join(f'{1000*d/c:.2f}' for d in spacings)
+array_box = (rf'One array : {n_rows} rows x {n_deep} deep, centred, flown at $z = {z_flown:g}\ \mathrm{{m}}$;' + '\n'
+             + rf'end-fire spacing $d = {" / ".join(f"{d:.2f}" for d in spacings)}\ \mathrm{{m}}$, '
+             + rf'$\tau = {delays_ms}\ \mathrm{{ms}}$ per step' + '\n'
+             + rf'maps computed at $f = {f:g}\ \mathrm{{Hz}}$')
+fig.text(x_maps, y_box, array_box, ha='center', va='center',
          bbox=dict(boxstyle='round', facecolor='white', edgecolor='black'))
 
 green_line = Line2D([0], [0], color='limegreen', linewidth=1, alpha=0.5)
