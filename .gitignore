@@ -1,4 +1,5 @@
 tests/
+src/simul_spl_sub_V1.py
 __pycache__/
 *.pyc
 .pytest_cache/
