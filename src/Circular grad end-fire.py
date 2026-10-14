@@ -52,7 +52,7 @@ delay_ms = delay*1000
 # Evaluation and display
 evaluation_margin = 0.5
 target = -3
-level_min = -40          # la fosse fait 95 x 60 m : 20 dB ne suffisent pas
+level_min = -40
 level_max = 0
 levels = np.linspace(level_min, level_max, 21)
 
@@ -62,7 +62,6 @@ levels = np.linspace(level_min, level_max, 21)
 # ============================================================
 
 def endfire_rows(n_rows, n_depth, aim_deg, dx=0.0, dy=0.0):
-    """Lignes end-fire paralleles. Une caisse = (x, y, yaw_deg, tau)."""
     a = np.deg2rad(aim_deg)
     ca, sa = np.cos(a), np.sin(a)
     boxes = []
@@ -75,6 +74,7 @@ def endfire_rows(n_rows, n_depth, aim_deg, dx=0.0, dy=0.0):
 
 offset = n_rows*sub_w + gap
 boxes = endfire_rows(n_rows, n_front, 0.0)
+
 for sign in (+1, -1):
     a = np.deg2rad(sign*side_aim)
     boxes += endfire_rows(n_rows, n_side, sign*side_aim,
@@ -85,7 +85,7 @@ N_sub = len(boxes)
 
 
 def source_positions(z_start):
-    """Centre acoustique de chaque caisse : centre geometrique avance de
+    """Centre acoustique de chaque caisse : centre geometrique avancé de
     sub_d/2 le long de l'axe de tir."""
     out = []
     for xb, yb, yaw, tau in boxes:
