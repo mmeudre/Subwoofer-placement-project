@@ -36,16 +36,16 @@ sub_h = 0.6
 
 # Array heights
 z_ground = 0
-z_flown = 10
+z_flown = 6
 
 # Fan geometry
-n_rows = 2          # lignes cote a cote
-n_front = 3         # caisses en profondeur, array central
+n_rows = 1          # lignes cote a cote
+n_front = 2         # caisses en profondeur, array central
 n_side = 2          # caisses en profondeur, arrays lateraux
 spacing = 1.2       # pas end-fire
-side_aim = 25       # ouverture des arrays lateraux [deg]
+side_aim = 15       # ouverture des arrays lateraux [deg]
 gap = 1.0           # jeu entre central et lateraux
-side_advance = -1.0  # avance des lateraux le long de leur axe de tir [m]
+side_advance = -0.5  # avance des lateraux le long de leur axe de tir [m]
 delay = spacing/c
 delay_ms = delay*1000
 
