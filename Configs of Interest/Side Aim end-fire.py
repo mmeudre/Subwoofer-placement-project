@@ -152,11 +152,6 @@ ref_flown = np.max(np.abs(p_flown_xy[evaluation_zone]))
 SPL_ground_xy_raw = 20*np.log10(np.maximum(np.abs(p_ground_xy), 1e-12)/ref_ground)
 SPL_flown_xy_raw = 20*np.log10(np.maximum(np.abs(p_flown_xy), 1e-12)/ref_flown)
 
-gradient_ground = (np.max(SPL_ground_xy_raw[evaluation_zone])
-                   - np.min(SPL_ground_xy_raw[evaluation_zone]))
-gradient_flown = (np.max(SPL_flown_xy_raw[evaluation_zone])
-                  - np.min(SPL_flown_xy_raw[evaluation_zone]))
-
 SPL_ground_xy = np.clip(SPL_ground_xy_raw, level_min, level_max)
 SPL_flown_xy = np.clip(SPL_flown_xy_raw, level_min, level_max)
 
@@ -261,14 +256,7 @@ plot_horizontal(axxy_flown, SPL_flown_xy)
 axxy_flown.apply_aspect()
 x_3d = 0.5 * sum(ax3d_flown.get_position().intervalx)
 x_maps = 0.5 * sum(axxy_flown.get_position().intervalx)
-x_cbar = 0.5 * sum(cax.get_position().intervalx)
 y_box = 0.07
-
-gradient_box = (r'$\Delta L = L_{\mathrm{max}} - L_{\mathrm{min}}$' + '\n'
-                + rf'$z = {z_ground:g}\ \mathrm{{m}}$ : $\Delta L = {gradient_ground:.2f}\ \mathrm{{dB}}$' + '\n'
-                + rf'$z = {z_flown:g}\ \mathrm{{m}}$ : $\Delta L = {gradient_flown:.2f}\ \mathrm{{dB}}$')
-fig.text(x_cbar, y_box, gradient_box, ha='center', va='center',
-         bbox=dict(boxstyle='round', facecolor='white', edgecolor='black'))
 
 fan_box = (rf'Central array : {n_rows} rows x {n_front} deep;' + '\n'
            + rf'side arrays : {n_rows} rows x {n_side} deep at $\pm {side_aim:g}^\circ$;' + '\n'
