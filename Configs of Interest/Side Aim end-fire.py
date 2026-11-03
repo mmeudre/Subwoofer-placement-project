@@ -34,9 +34,13 @@ sub_w = 1.0
 sub_d = 0.8
 sub_h = 0.6
 
-# Array heights
+# Array heights (bas des caisses)
 z_ground = 0
-z_flown = 6
+z_flown = 10
+
+# Scenario : 'concert' (foule en x > 0) ou 'stadium' (zone sous l'array)
+SCENARIO = 'concert'
+Z_START = z_ground
 
 # Fan geometry
 n_rows = 1          # lignes cote a cote
@@ -72,6 +76,15 @@ def endfire_rows(n_rows, n_depth, aim_deg, dx=0.0, dy=0.0):
     return boxes
 
 
+def footprint(xb, yb, yaw):
+    """Les 4 coins de l'empreinte au sol d'une caisse."""
+    a = np.deg2rad(yaw)
+    ca, sa = np.cos(a), np.sin(a)
+    corners = [(+sub_d/2, +sub_w/2), (+sub_d/2, -sub_w/2),
+               (-sub_d/2, -sub_w/2), (-sub_d/2, +sub_w/2)]
+    return [(xb + u*ca - v*sa, yb + u*sa + v*ca) for u, v in corners]
+
+
 offset = n_rows*sub_w + gap
 boxes = endfire_rows(n_rows, n_front, 0.0)
 
@@ -81,27 +94,24 @@ for sign in (+1, -1):
                           dx=-sign*offset*np.sin(a) + side_advance*np.cos(a),
                           dy=sign*offset*np.cos(a) + side_advance*np.sin(a))
 
+# Convention commune : x = 0 sur la face avant la plus en avant de l'array
+x_front = max(max(u for u, v in footprint(xb, yb, yaw)) for xb, yb, yaw, tau in boxes)
+boxes = [(xb - x_front, yb, yaw, tau) for xb, yb, yaw, tau in boxes]
+
 N_sub = len(boxes)
 
 
 def source_positions(z_start):
-    """Centre acoustique de chaque caisse : centre geometrique avancé de
-    sub_d/2 le long de l'axe de tir."""
-    out = []
-    for xb, yb, yaw, tau in boxes:
-        a = np.deg2rad(yaw)
-        out.append((xb + sub_d/2*np.cos(a), yb + sub_d/2*np.sin(a),
-                    z_start + sub_h/2, tau))
-    return out
+    """Centre acoustique de chaque caisse : centre de la caisse, a mi-hauteur."""
+    return [(xb, yb, z_start + sub_h/2, tau) for xb, yb, yaw, tau in boxes]
 
 
-def footprint(xb, yb, yaw):
-    """Les 4 coins de l'empreinte au sol d'une caisse."""
-    a = np.deg2rad(yaw)
-    ca, sa = np.cos(a), np.sin(a)
-    corners = [(+sub_d/2, +sub_w/2), (+sub_d/2, -sub_w/2),
-               (-sub_d/2, -sub_w/2), (-sub_d/2, +sub_w/2)]
-    return [(xb + u*ca - v*sa, yb + u*sa + v*ca) for u, v in corners]
+def array(z_start=Z_START):
+    """Interface commune : sources (L, 3) [m], tau (L,) [s], gain (L,) signe."""
+    S = source_positions(z_start)
+    sources = np.array([s[:3] for s in S])
+    tau = np.array([s[3] for s in S])
+    return sources, tau, np.ones(len(S))
 
 
 # ============================================================
@@ -126,34 +136,6 @@ def fan_top_view(X, Y, z_obs, z_start):
     for xs, ys, zs, tau in source_positions(z_start):
         p += np.exp(-1j*2*np.pi*f*tau)*monopole_top_view(X, Y, z_obs, xs, ys, zs)
     return p
-
-
-# ============================================================
-# EVALUATION AREA
-# ============================================================
-
-source_zone = np.zeros_like(X, dtype=bool)
-for xb, yb, yaw, tau in boxes:
-    source_zone |= ((np.abs(X-xb) <= sub_d/2 + evaluation_margin)
-                    & (np.abs(Y-yb) <= sub_w/2 + evaluation_margin))
-evaluation_zone = ~source_zone
-
-
-# ============================================================
-# PRESSURE FIELDS
-# ============================================================
-
-p_ground_xy = fan_top_view(X, Y, z_obs, z_ground)
-p_flown_xy = fan_top_view(X, Y, z_obs, z_flown)
-
-ref_ground = np.max(np.abs(p_ground_xy[evaluation_zone]))
-ref_flown = np.max(np.abs(p_flown_xy[evaluation_zone]))
-
-SPL_ground_xy_raw = 20*np.log10(np.maximum(np.abs(p_ground_xy), 1e-12)/ref_ground)
-SPL_flown_xy_raw = 20*np.log10(np.maximum(np.abs(p_flown_xy), 1e-12)/ref_flown)
-
-SPL_ground_xy = np.clip(SPL_ground_xy_raw, level_min, level_max)
-SPL_flown_xy = np.clip(SPL_flown_xy_raw, level_min, level_max)
 
 
 # ============================================================
@@ -205,7 +187,7 @@ def draw_3d_scene(ax, z_start):
 
 
 def plot_horizontal(ax, SPL, title=None):
-    im = ax.contourf(X, Y, SPL, levels=levels, cmap='viridis')
+    im = ax.contourf(X, Y, SPL, levels=levels, cmap='inferno')
     ax.contour(X, Y, SPL, levels=[target], colors='red', linewidths=1, linestyles='solid')
 
     for xb, yb, yaw, tau in boxes:
@@ -224,66 +206,95 @@ def plot_horizontal(ax, SPL, title=None):
     return im
 
 
-# ============================================================
-# FIGURE
-# ============================================================
+if __name__ == '__main__':
+    # ============================================================
+    # EVALUATION AREA
+    # ============================================================
 
-fig = plt.figure(figsize=(15, 9))
-gs = fig.add_gridspec(2, 3, width_ratios=[1, 1.35, 0.05],
-                      left=0.04, right=0.91, bottom=0.21, top=0.93,
-                      wspace=0.22, hspace=0.26)
-
-ax3d_ground = fig.add_subplot(gs[0, 0], projection='3d')
-axxy_ground = fig.add_subplot(gs[0, 1])
-
-ax3d_flown = fig.add_subplot(gs[1, 0], projection='3d')
-axxy_flown = fig.add_subplot(gs[1, 1])
-
-cax = fig.add_subplot(gs[:, 2])
-
-draw_3d_scene(ax3d_ground, z_ground)
-im = plot_horizontal(axxy_ground, SPL_ground_xy, r'Horizontal plane')
-
-draw_3d_scene(ax3d_flown, z_flown)
-plot_horizontal(axxy_flown, SPL_flown_xy)
+    source_zone = np.zeros_like(X, dtype=bool)
+    for xb, yb, yaw, tau in boxes:
+        source_zone |= ((np.abs(X-xb) <= sub_d/2 + evaluation_margin)
+                        & (np.abs(Y-yb) <= sub_w/2 + evaluation_margin))
+    evaluation_zone = ~source_zone
 
 
-# ============================================================
-# INFORMATION BOXES
-# ============================================================
+    # ============================================================
+    # PRESSURE FIELDS
+    # ============================================================
 
-# Each box is centred under the panel it describes
-axxy_flown.apply_aspect()
-x_3d = 0.5 * sum(ax3d_flown.get_position().intervalx)
-x_maps = 0.5 * sum(axxy_flown.get_position().intervalx)
-y_box = 0.07
+    p_ground_xy = fan_top_view(X, Y, z_obs, z_ground)
+    p_flown_xy = fan_top_view(X, Y, z_obs, z_flown)
 
-fan_box = (rf'Central array : {n_rows} rows x {n_front} deep;' + '\n'
-           + rf'side arrays : {n_rows} rows x {n_side} deep at $\pm {side_aim:g}^\circ$;' + '\n'
-           + rf'end-fire spacing $d = {spacing:.2f}\ \mathrm{{m}}$, $\tau = {delay_ms:.2f}\ \mathrm{{ms}}$ per step' + '\n'
-           + rf'maps computed at $f = {f:g}\ \mathrm{{Hz}}$')
-fig.text(x_maps, y_box, fan_box, ha='center', va='center',
-         bbox=dict(boxstyle='round', facecolor='white', edgecolor='black'))
+    ref_ground = np.max(np.abs(p_ground_xy[evaluation_zone]))
+    ref_flown = np.max(np.abs(p_flown_xy[evaluation_zone]))
 
-green_line = Line2D([0], [0], color='limegreen', linewidth=1, alpha=0.5)
-blue_line = Line2D([0], [0], color='blue', linewidth=1, alpha=0.5)
-fig.legend([green_line, blue_line],
-           [rf'Observation plane : $z = {z_obs:g}\ \mathrm{{m}}$',
-            rf'Slice plane : $y = {y_slice:g}\ \mathrm{{m}}$'],
-           loc='center', bbox_to_anchor=(x_3d, y_box), frameon=True,
-           edgecolor='black', fancybox=True)
+    SPL_ground_xy_raw = 20*np.log10(np.maximum(np.abs(p_ground_xy), 1e-12)/ref_ground)
+    SPL_flown_xy_raw = 20*np.log10(np.maximum(np.abs(p_flown_xy), 1e-12)/ref_flown)
+
+    SPL_ground_xy = np.clip(SPL_ground_xy_raw, level_min, level_max)
+    SPL_flown_xy = np.clip(SPL_flown_xy_raw, level_min, level_max)
 
 
-# ============================================================
-# COLORBAR
-# ============================================================
+    # ============================================================
+    # FIGURE
+    # ============================================================
 
-cbar = fig.colorbar(im, cax=cax)
-cbar.set_label(r'Normalised level [dB]', fontsize=12)
-cbar.ax.axhline(target, color='red', linewidth=1, linestyle='solid')
-cbar.ax.annotate(rf'${target:g}\ \mathrm{{dB}}$', xy=(0, target),
-                 xycoords=('axes fraction', 'data'), xytext=(-4, 0),
-                 textcoords='offset points', ha='right', va='center',
-                 color='red', fontsize=10)
+    fig = plt.figure(figsize=(15, 9))
+    gs = fig.add_gridspec(2, 3, width_ratios=[1, 1.35, 0.05],
+                          left=0.04, right=0.91, bottom=0.21, top=0.93,
+                          wspace=0.22, hspace=0.26)
 
-plt.show()
+    ax3d_ground = fig.add_subplot(gs[0, 0], projection='3d')
+    axxy_ground = fig.add_subplot(gs[0, 1])
+
+    ax3d_flown = fig.add_subplot(gs[1, 0], projection='3d')
+    axxy_flown = fig.add_subplot(gs[1, 1])
+
+    cax = fig.add_subplot(gs[:, 2])
+
+    draw_3d_scene(ax3d_ground, z_ground)
+    im = plot_horizontal(axxy_ground, SPL_ground_xy, r'Horizontal plane')
+
+    draw_3d_scene(ax3d_flown, z_flown)
+    plot_horizontal(axxy_flown, SPL_flown_xy)
+
+
+    # ============================================================
+    # INFORMATION BOXES
+    # ============================================================
+
+    # Each box is centred under the panel it describes
+    axxy_flown.apply_aspect()
+    x_3d = 0.5 * sum(ax3d_flown.get_position().intervalx)
+    x_maps = 0.5 * sum(axxy_flown.get_position().intervalx)
+    y_box = 0.07
+
+    fan_box = (rf'Central array : {n_rows} rows x {n_front} deep;' + '\n'
+               + rf'side arrays : {n_rows} rows x {n_side} deep at $\pm {side_aim:g}^\circ$;' + '\n'
+               + rf'end-fire spacing $d = {spacing:.2f}\ \mathrm{{m}}$, $\tau = {delay_ms:.2f}\ \mathrm{{ms}}$ per step' + '\n'
+               + rf'maps computed at $f = {f:g}\ \mathrm{{Hz}}$')
+    fig.text(x_maps, y_box, fan_box, ha='center', va='center',
+             bbox=dict(boxstyle='round', facecolor='white', edgecolor='black'))
+
+    green_line = Line2D([0], [0], color='limegreen', linewidth=1, alpha=0.5)
+    blue_line = Line2D([0], [0], color='blue', linewidth=1, alpha=0.5)
+    fig.legend([green_line, blue_line],
+               [rf'Observation plane : $z = {z_obs:g}\ \mathrm{{m}}$',
+                rf'Slice plane : $y = {y_slice:g}\ \mathrm{{m}}$'],
+               loc='center', bbox_to_anchor=(x_3d, y_box), frameon=True,
+               edgecolor='black', fancybox=True)
+
+
+    # ============================================================
+    # COLORBAR
+    # ============================================================
+
+    cbar = fig.colorbar(im, cax=cax)
+    cbar.set_label(r'Normalised level [dB]', fontsize=12)
+    cbar.ax.axhline(target, color='red', linewidth=1, linestyle='solid')
+    cbar.ax.annotate(rf'${target:g}\ \mathrm{{dB}}$', xy=(0, target),
+                     xycoords=('axes fraction', 'data'), xytext=(-4, 0),
+                     textcoords='offset points', ha='right', va='center',
+                     color='red', fontsize=10)
+
+    plt.show()
