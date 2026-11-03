@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Polygon
+from matplotlib.patches import Polygon, Rectangle
 from matplotlib.lines import Line2D
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
@@ -206,6 +206,80 @@ def plot_horizontal(ax, SPL, title=None):
     return im
 
 
+# ============================================================
+# BRIGHT ZONE (SEPARATE WINDOW)
+# ============================================================
+
+# Meme zone que bright_zone() dans Algorithms/metrics.py : carre de zone_size a z_obs ;
+# concert : x de zone_x_start a zone_x_start + zone_size, centre en y = 0 ;
+# stadium : centre sous l'array (moyenne des centres acoustiques).
+zone_size = 50.0
+zone_x_start = 3.0
+zone_step = 50.0/70        # 70 mailles sur 50 m : pas de 0.714 m, comme metrics.py
+
+
+def bright_zone_extent():
+    """(x_min, x_max, y_min, y_max) de la bright zone du scenario."""
+    if SCENARIO == 'concert':
+        return zone_x_start, zone_x_start + zone_size, -zone_size/2, zone_size/2
+    sources = array()[0]
+    cx, cy = sources[:, 0].mean(), sources[:, 1].mean()
+    return cx - zone_size/2, cx + zone_size/2, cy - zone_size/2, cy + zone_size/2
+
+
+def bright_zone_points():
+    """Points de controle : centres des mailles de cote zone_step (comme metrics.py)."""
+    x0, x1, y0, y1 = bright_zone_extent()
+    offsets = (np.arange(int(round(zone_size/zone_step))) + 0.5)*zone_step
+    return np.meshgrid(x0 + offsets, y0 + offsets)
+
+
+def bright_zone_figure(z_start=Z_START):
+    """Array a sa hauteur d'evaluation et bright zone : vue 3D et vue de dessus."""
+    x0, x1, y0, y1 = bright_zone_extent()
+    corners = np.array([c for xb, yb, yaw, tau in boxes for c in footprint(xb, yb, yaw)])
+    xmin, xmax = min(x0, corners[:, 0].min()) - 5, max(x1, corners[:, 0].max()) + 5
+    ymin, ymax = min(y0, corners[:, 1].min()) - 5, max(y1, corners[:, 1].max()) + 5
+    zmax = max(15, z_start + sub_h + 3)
+
+    fig = plt.figure(figsize=(17, 7.5))
+    fig.suptitle(rf'Side Aim end-fire : bright zone ({SCENARIO}, $z = {z_obs:g}$ m), array at $z = {z_start:g}$ m',
+                 fontsize=14, fontweight='bold')
+
+    ax3d = fig.add_subplot(1, 2, 1, projection='3d')
+    ax3d.plot_surface(np.array([[xmin, xmax], [xmin, xmax]]), np.array([[ymin, ymin], [ymax, ymax]]),
+                      np.zeros((2, 2)), color='lightgray', alpha=0.25, linewidth=0)
+    ax3d.plot_surface(np.array([[x0, x1], [x0, x1]]), np.array([[y0, y0], [y1, y1]]),
+                      np.full((2, 2), z_obs), color='navy', alpha=0.7, linewidth=0)
+    xp, yp = bright_zone_points()
+    for xb, yb, yaw, tau in boxes:
+        draw_sub_box(ax3d, xb, yb, yaw, z_start)
+    ax3d.set_title('3D view', fontsize=12)
+    ax3d.set_xlabel(r'$x$ [m]')
+    ax3d.set_ylabel(r'$y$ [m]')
+    ax3d.set_zlabel(r'$z$ [m]')
+    ax3d.set_xlim(xmin, xmax)
+    ax3d.set_ylim(ymin, ymax)
+    ax3d.set_zlim(0, zmax)
+    ax3d.set_box_aspect((xmax - xmin, ymax - ymin, 0.35*max(xmax - xmin, ymax - ymin)))
+    ax3d.view_init(elev=22, azim=-58)
+
+    ax = fig.add_subplot(1, 2, 2)
+    ax.add_patch(Rectangle((x0, y0), x1 - x0, y1 - y0, facecolor='navy', alpha=0.7, edgecolor='none'))
+    ax.scatter(xp, yp, s=0.5, color='white', linewidths=0)
+    for xb, yb, yaw, tau in boxes:
+        ax.add_patch(Polygon(footprint(xb, yb, yaw), closed=True,
+                             facecolor='white', edgecolor='black', linewidth=1.0))
+    ax.set_title(rf'Top view : {xp.size} control points, step ${zone_step:.2f}$ m', fontsize=12)
+    ax.set_xlabel(r'$x$ [m]')
+    ax.set_ylabel(r'$y$ [m]')
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+    ax.set_aspect('equal')
+    ax.grid(True, alpha=0.3)
+    return fig
+
+
 if __name__ == '__main__':
     # ============================================================
     # EVALUATION AREA
@@ -296,5 +370,7 @@ if __name__ == '__main__':
                      xycoords=('axes fraction', 'data'), xytext=(-4, 0),
                      textcoords='offset points', ha='right', va='center',
                      color='red', fontsize=10)
+
+    fig_zone = bright_zone_figure()
 
     plt.show()
