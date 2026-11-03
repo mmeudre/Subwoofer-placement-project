@@ -40,7 +40,7 @@ z_flown = 6
 
 # Fan geometry
 n_rows = 1          # lignes cote a cote
-n_front = 2         # caisses en profondeur, array central
+n_front = 3         # caisses en profondeur, array central
 n_side = 2          # caisses en profondeur, arrays lateraux
 spacing = 1.2       # pas end-fire
 side_aim = 15       # ouverture des arrays lateraux [deg]
