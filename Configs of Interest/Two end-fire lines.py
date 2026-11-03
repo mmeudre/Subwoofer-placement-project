@@ -54,8 +54,9 @@ def box(xb, yb, zb=0.0, yaw=0.0, tau=0.0, gain=1.0, facecolor='white', on_face=F
 
 
 def geometry():
-    # 2 lignes end-fire separees de 20 m x 3 caisses en profondeur
-    d_lines = 0.8
+    # 2 lignes end-fire separees de 20 m x 3 caisses en profondeur, pas lambda/4 a f_design
+    f_design = 80
+    d_lines = c/(4*f_design)
     tau_lines = d_lines/c
     B = []
     for y_array in (-10.0, 10.0):

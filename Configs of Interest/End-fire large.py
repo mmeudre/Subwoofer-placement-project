@@ -55,6 +55,7 @@ def box(xb, yb, zb=0.0, yaw=0.0, tau=0.0, gain=1.0, facecolor='white', on_face=F
 
 def geometry():
     # 2 rangees cote a cote x 3 caisses en profondeur, pas d_large, retard i*tau
+    # Seule config end-fire non accordee a 80 Hz : d_large = 1.20 m -> c/(4 d) = 71.5 Hz
     d_large = 1.20
     tau_large = d_large/c
     B = []
