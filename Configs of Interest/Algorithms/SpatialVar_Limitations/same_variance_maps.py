@@ -15,11 +15,6 @@ l'homogeneite : la variance ne voit ni la forme de la distribution des niveaux
 (beaucoup de petits ecarts ou quelques trous profonds), ni leur disposition dans
 la zone.
 
-P90-P10 : ecart entre le niveau depasse par 10 % de la zone et celui depasse par
-90 % ; les 80 % centraux du public sont dans cette fenetre. Il ignore les 10 % les
-plus faibles et les 10 % les plus forts : robuste aux creux isoles, mais aveugle a
-un defaut qui touche moins de 10 % de la zone (voir C1).
-
 Bright zone : celle de metrics.py (concert, 50 x 50 m, pas 50/70 m, z = 1.6 m).
 """
 import sys
@@ -38,13 +33,6 @@ rng = np.random.default_rng(0)
 zone = bright_zone('concert')
 x, y = zone[:, 0], zone[:, 1]
 n = int(round(np.sqrt(len(zone))))
-
-
-def stats(L):
-    """sigma^2, ecart interdecile P90-P10 et fraction de la zone a plus de 6 dB sous la mediane."""
-    D = L - np.median(L)
-    p10, p90 = np.percentile(D, [10, 90])
-    return np.var(L), p90 - p10, 100*np.mean(D < -6), D.min(), D.max()
 
 
 # B : decroissance en 1/r, recentree sur L0
@@ -79,17 +67,18 @@ maps = [('B : décroissance en 1/r', L_B),
         ('C2 : trous et pics larges', L_C2),
         ('D : B mélangée', L_D)]
 
-fig, axes = plt.subplots(2, 2, figsize=(12, 11), sharex=True, sharey=True, layout='constrained')
+# 'compressed' : mise en page adaptee aux cartes a rapport d'aspect fixe ; les cartes et la
+# barre de couleur restent groupees et centrees quelle que soit la taille de la fenetre
+fig, axes = plt.subplots(2, 2, figsize=(12, 12), sharex=True, sharey=True, layout='compressed')
+fig.get_layout_engine().set(wspace=0.12, hspace=0.06)
 extent = [x.min(), x.max(), y.min(), y.max()]
 for ax, (title, L) in zip(axes.flat, maps):
-    var, idr, frac, dmin, dmax = stats(L)
+    var = np.var(L)
     im = ax.imshow(L.reshape(n, n), origin='lower', extent=extent, cmap='inferno',
                    vmin=L0 - 25, vmax=L0 + 15, interpolation='nearest')
     ax.set_title(rf'$\bf{{{title.split(" :")[0]}}}$ : {title.split(": ")[1]}' + '\n'
-                 + rf'$\sigma^2$ = {var:.1f} dB$^2$ ; P90-P10 = {idr:.1f} dB ; {frac:.1f} % < -6 dB' + '\n'
-                 + f'min / max vs médiane : {dmin:+.1f} / {dmax:+.1f} dB', fontsize=10)
-    print(f'{title:26s} sigma2 = {var:6.2f} dB2 | P90-P10 = {idr:5.1f} dB | '
-          f'{frac:5.1f} % sous -6 dB | min {dmin:+6.1f} max {dmax:+6.1f} dB')
+                 + rf'$\sigma^2$ = {var:.1f} dB$^2$', fontsize=11)
+    print(f'{title:26s} sigma2 = {var:6.2f} dB2')
 for ax in axes[1]:
     ax.set_xlabel('x [m]')
 for ax in axes[:, 0]:
