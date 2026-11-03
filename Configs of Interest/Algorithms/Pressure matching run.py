@@ -12,7 +12,7 @@ plt.close('all')
 # CONFIGURATION TO OPTIMISE
 # ============================================================
 
-CONFIG = Path(__file__).parent.parent / 'Side Aim end-fire Martin.py'
+CONFIG = Path(__file__).parent.parent / 'Side Aim end-fire.py'
 
 # Bright zone [m], observation plane z = z_obs of the configuration
 bright_x = (10, 50)
